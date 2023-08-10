@@ -1,22 +1,19 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License. See License.txt in the project root for license information.
 
-using Docker.DotNet;
-using Microsoft.Azure.Management.ContainerRegistry.Fluent;
-using Microsoft.Azure.Management.ContainerRegistry.Fluent.Models;
-using Microsoft.Azure.Management.Fluent;
-using Microsoft.Azure.Management.ResourceManager.Fluent;
-using Microsoft.Azure.Management.ResourceManager.Fluent.Authentication;
-using Microsoft.Azure.Management.ResourceManager.Fluent.Core;
-using Microsoft.Azure.Management.Samples.Common;
-using System;
+using Azure;
+using Azure.Core;
+using Azure.Identity;
+using Azure.ResourceManager.Resources.Models;
+using Azure.ResourceManager.Samples.Common;
+using Azure.ResourceManager.Resources;
+using Azure.ResourceManager;
 
 namespace ManageContainerRegistry
 {
     public class Program
     {
-        private static readonly Region Region = Region.USEast2;
-
+        private static readonly AzureLocation _defaultLocation = AzureLocation.EastUS;
 
         /**
          * Azure Container Registry sample for managing container registry.
@@ -28,12 +25,20 @@ namespace ManageContainerRegistry
          *      to/from an Azure Container Registry
          *  - Create a new Docker container from an image that was pulled from Azure Container Registry
          */
-        public static void RunSample(IAzure azure)
+        public static async Task RunSample(ArmClient client)
         {
-            string rgName = SdkContext.RandomResourceName("rgACR", 15);
+            // Get default subscription
+            SubscriptionResource subscription = await client.GetDefaultSubscriptionAsync();
+
+            // Create a resource group in the EastUS region
+            string rgName = Utilities.CreateRandomName("ARMTemplateRG");
+            Utilities.Log($"created resource group with name:{rgName}");
+            ArmOperation<ResourceGroupResource> rgLro = await subscription.GetResourceGroups().CreateOrUpdateAsync(WaitUntil.Completed, rgName, new ResourceGroupData(AzureLocation.EastUS));
+            ResourceGroupResource resourceGroup = rgLro.Value;
+            Utilities.Log("Created a resource group with name: " + resourceGroup.Data.Name);
+
             string acrName = SdkContext.RandomResourceName("acrsample", 20);
             string saName = SdkContext.RandomResourceName("sa", 20);
-            Region region = Region.USEast2;
             string dockerImageName = "hello-world";
             string dockerImageTag = "latest";
             string dockerContainerName = "sample-hello";
@@ -179,34 +184,34 @@ namespace ManageContainerRegistry
                 try
                 {
                     Utilities.Log("Deleting Resource Group: " + rgName);
-                    azure.ResourceGroups.BeginDeleteByName(rgName);
+                    await resourceGroup.DeleteAsync(WaitUntil.Completed);
                     Utilities.Log("Deleted Resource Group: " + rgName);
                 }
-                catch (Exception)
+                catch (NullReferenceException)
                 {
                     Utilities.Log("Did not create any resources in Azure. No clean up is necessary");
+                }
+                catch (Exception ex)
+                {
+                    Utilities.Log(ex);
                 }
             }
         }
 
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             try
             {
                 //=================================================================
                 // Authenticate
-                AzureCredentials credentials = SdkContext.AzureCredentialsFactory.FromFile(Environment.GetEnvironmentVariable("AZURE_AUTH_LOCATION"));
+                var clientId = Environment.GetEnvironmentVariable("CLIENT_ID");
+                var clientSecret = Environment.GetEnvironmentVariable("CLIENT_SECRET");
+                var tenantId = Environment.GetEnvironmentVariable("TENANT_ID");
+                var subscription = Environment.GetEnvironmentVariable("SUBSCRIPTION_ID");
+                ClientSecretCredential credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
+                ArmClient client = new ArmClient(credential, subscription);
 
-                var azure = Azure
-                    .Configure()
-                    .WithLogLevel(HttpLoggingDelegatingHandler.Level.Basic)
-                    .Authenticate(credentials)
-                    .WithDefaultSubscription();
-
-                // Print selected subscription
-                Utilities.Log("Selected subscription: " + azure.SubscriptionId);
-
-                RunSample(azure);
+                await RunSample(client);
             }
             catch (Exception ex)
             {
