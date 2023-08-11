@@ -3,20 +3,14 @@
 
 using Docker.DotNet;
 using Docker.DotNet.X509;
-using Microsoft.Azure.Management.Fluent;
-using Microsoft.Azure.Management.Compute.Fluent;
-using Microsoft.Azure.Management.ResourceManager.Fluent;
 using System;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using Microsoft.Azure.Management.ResourceManager.Fluent.Core;
-using Microsoft.Azure.Management.Compute.Fluent.Models;
-using Microsoft.Azure.Management.Network.Fluent;
 using Docker.DotNet.Models;
 using System.Collections.Generic;
 using System.IO;
 
-namespace Microsoft.Azure.Management.Samples.Common
+namespace Azure.ResourceManager.Samples.Common
 {
     /**
      * Syncronous extension wrappers class for Docker.DotNet async methods.
@@ -80,10 +74,10 @@ namespace Microsoft.Azure.Management.Samples.Common
          * @param region - region to be used when creating a virtual machine
          * @return an instance of DockerClient
          */
-        public static DockerClient CreateDockerClient(IAzure azure, String rgName, Region region)
+        public static DockerClient CreateDockerClient()
         {
-            string envDockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
-            string envDockerCertPath = Environment.GetEnvironmentVariable("DOCKER_CERT_PATH");
+            var envDockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
+            var envDockerCertPath = Environment.GetEnvironmentVariable("DOCKER_CERT_PATH");
             string dockerHostUrl;
             DockerClient dockerClient;
 
@@ -97,6 +91,8 @@ namespace Microsoft.Azure.Management.Samples.Common
             {
                 dockerHostUrl = envDockerHost;
                 Utilities.Log("Using local settings to connect to a Docker service: " + dockerHostUrl);
+                // Attempt to configure a Docker engine running inside a new Azure virtual machine
+                dockerClient = FromNewDockerVM(azure, rgName, region);
 
                 if (String.IsNullOrWhiteSpace(envDockerCertPath) || !File.Exists(envDockerCertPath + "/key.pfx"))
                 {
@@ -136,8 +132,9 @@ namespace Microsoft.Azure.Management.Samples.Common
          */
         public static DockerClient FromNewDockerVM(IAzure azure, String rgName, Region region)
         {
-            string dockerVMName = SdkContext.RandomResourceName("dockervm", 15);
-            string publicIPDnsLabel = SdkContext.RandomResourceName("pip", 10);
+
+            string dockerVMName = Utilities.CreateRandomName("dockervm");
+            string publicIPDnsLabel = Utilities.CreateRandomName("publicIP");
             string vmUserName = "dockerUser";
             string vmPassword = Utilities.CreatePassword();
 
@@ -176,7 +173,7 @@ namespace Microsoft.Azure.Management.Samples.Common
          * @param vmPassword - password to connect with to the Docker host machine
          * @return an instance of DockerClient
          */
-        public static DockerClient InstallDocker(string dockerHostIP, string vmUserName, string vmPassword)
+        public static async Task<DockerClient> InstallDocker(string dockerHostIP, string vmUserName, string vmPassword)
         {
             int keyPfxBuffLength = 10000;
             byte[] keyPfxContent = new byte[keyPfxBuffLength]; // it stores the content of the key.pfx certificate file
@@ -255,7 +252,7 @@ namespace Microsoft.Azure.Management.Samples.Common
                     Utilities.Log(output);
                     string dockerHostPort = "2376"; // Default Docker port when secured connection is enabled
                     dockerHostTlsEnabled = true;
-                    SdkContext.DelayProvider.Delay(10000);
+                    await Task.Delay(1000);
 
                     dockerHostUrl = "tcp://" + dockerHostIP + ":" + dockerHostPort;
                 }
