@@ -9,6 +9,10 @@ using System.Text;
 using Docker.DotNet.Models;
 using System.Collections.Generic;
 using System.IO;
+using Azure.ResourceManager.Resources;
+using Azure.ResourceManager.Compute;
+using System.Net.NetworkInformation;
+using Azure.ResourceManager.Network;
 
 namespace Azure.ResourceManager.Samples.Common
 {
@@ -74,7 +78,7 @@ namespace Azure.ResourceManager.Samples.Common
          * @param region - region to be used when creating a virtual machine
          * @return an instance of DockerClient
          */
-        public static DockerClient CreateDockerClient()
+        public static async Task<DockerClient> CreateDockerClient(ResourceGroupResource resourceGroup)
         {
             var envDockerHost = Environment.GetEnvironmentVariable("DOCKER_HOST");
             var envDockerCertPath = Environment.GetEnvironmentVariable("DOCKER_CERT_PATH");
@@ -85,14 +89,14 @@ namespace Azure.ResourceManager.Samples.Common
             {
                 // Could not find a Docker environment; presume that there is no local Docker engine running and
                 //    attempt to configure a Docker engine running inside a new    Azure virtual machine
-                dockerClient = FromNewDockerVM(azure, rgName, region);
+                dockerClient = await FromNewDockerVM(resourceGroup);
             }
             else
             {
                 dockerHostUrl = envDockerHost;
                 Utilities.Log("Using local settings to connect to a Docker service: " + dockerHostUrl);
                 // Attempt to configure a Docker engine running inside a new Azure virtual machine
-                dockerClient = FromNewDockerVM(azure, rgName, region);
+                dockerClient = await FromNewDockerVM(resourceGroup);
 
                 if (String.IsNullOrWhiteSpace(envDockerCertPath) || !File.Exists(envDockerCertPath + "/key.pfx"))
                 {
@@ -130,38 +134,41 @@ namespace Azure.ResourceManager.Samples.Common
          * @param region - region to be used when creating a virtual machine
          * @return an instance of DockerClient
          */
-        public static DockerClient FromNewDockerVM(IAzure azure, String rgName, Region region)
+        public static async Task<DockerClient> FromNewDockerVM(ResourceGroupResource resoueceGroup)
         {
 
             string dockerVMName = Utilities.CreateRandomName("dockervm");
             string publicIPDnsLabel = Utilities.CreateRandomName("publicIP");
-            string vmUserName = "dockerUser";
+            string vmUserName = Utilities.CreateUsername();
             string vmPassword = Utilities.CreatePassword();
 
             // Could not find a Docker environment; presume that there is no local Docker engine running and
             //    attempt to configure a Docker engine running inside a new Azure virtual machine
-            Utilities.Log("Creating an Azure virtual machine running Docker");
 
-            IVirtualMachine dockerVM = azure.VirtualMachines.Define(dockerVMName)
-                .WithRegion(region)
-                .WithExistingResourceGroup(rgName)
-                .WithNewPrimaryNetwork("10.0.0.0/28")
-                .WithPrimaryPrivateIPAddressDynamic()
-                .WithNewPrimaryPublicIPAddress(publicIPDnsLabel)
-                .WithPopularLinuxImage(KnownLinuxVirtualMachineImage.UbuntuServer16_04_Lts)
-                .WithRootUsername(vmUserName)
-                .WithRootPassword(vmPassword)
-                .WithSize(VirtualMachineSizeTypes.Parse("Standard_D2a_v4"))
-                .Create();
+            string publicIPName = Utilities.CreateRandomName("publicIP");
+            var publiciIP = await Utilities.CreatePublicIP(resoueceGroup, publicIPName);
+
+            Utilities.Log("Creating an network interface for create vm");
+            string nicName = Utilities.CreateRandomName("networkInterface");
+            var networkInterface = await Utilities.CreateNetworkInterface(resoueceGroup, publiciIP.Id, nicName);
+
+            Utilities.Log("Creating an Azure virtual machine running Docker");
+            string vmName = Utilities.CreateRandomName("vm");
+            VirtualMachineResource dockerVM = await Utilities.CreateVirtualMachine(resoueceGroup, networkInterface, vmName);
 
             Utilities.Log("Created Azure Virtual Machine: " + dockerVM.Id);
 
             // Get the IP of the Docker host
-            INicIPConfiguration nicIPConfiguration = dockerVM.GetPrimaryNetworkInterface().PrimaryIPConfiguration;
-            IPublicIPAddress publicIp = nicIPConfiguration.GetPublicIPAddress();
-            string dockerHostIP = publicIp.IPAddress;
+            Utilities.Log(networkInterface.Data.IPConfigurations.First().PublicIPAddress);
 
-            DockerClient dockerClient = InstallDocker(dockerHostIP, vmUserName, vmPassword);
+            //INicIPConfiguration nicIPConfiguration = dockerVM.GetPrimaryNetworkInterface().PrimaryIPConfiguration;
+            //IPublicIPAddress publicIp = nicIPConfiguration.GetPublicIPAddress();
+            //string dockerHostIP = networkInterface.Data.IPConfigurations.First().PublicIPAddress.ServicePublicIPAddress.IPAddress.ToString();
+
+            publiciIP = await resoueceGroup.GetPublicIPAddresses().GetAsync(publicIPName);
+            string dockerHostIP = publiciIP.Data.IPAddress.ToString();
+
+            DockerClient dockerClient = await InstallDocker(dockerHostIP, vmUserName, vmPassword);
 
             return dockerClient;
         }

@@ -84,12 +84,21 @@ namespace Azure.ResourceManager.Samples.Common
             }
         }
 
-        static async Task<VirtualMachineResource> CreateDefaultVirtualMachine(ResourceGroupResource resourceGroup, string vmName)
+        public static async Task<PublicIPAddressResource> CreatePublicIP(ResourceGroupResource resourceGroup, string publicIPName)
         {
-            string adminUsername = Utilities.CreateUsername();
+            var publicIPInput = new PublicIPAddressData()
+            {
+                Location = resourceGroup.Data.Location,
+                PublicIPAllocationMethod = NetworkIPAllocationMethod.Dynamic,
+            };
+            var publicIPLro = await resourceGroup.GetPublicIPAddresses().CreateOrUpdateAsync(WaitUntil.Completed, publicIPName, publicIPInput);
+            return publicIPLro.Value;
+        }
+
+        public static async Task<NetworkInterfaceResource> CreateNetworkInterface(ResourceGroupResource resourceGroup,ResourceIdentifier publicIPId, string nicName)
+        {
             string vnetName = Utilities.CreateRandomName("vnet");
             string publicIPName = Utilities.CreateRandomName("publicIP");
-            string nicName = Utilities.CreateRandomName("networkInterface");
 
             // Create Network
             VirtualNetworkData vnetInput = new VirtualNetworkData()
@@ -98,20 +107,13 @@ namespace Azure.ResourceManager.Samples.Common
                 AddressPrefixes = { "10.10.0.0/16" },
                 Subnets =
                 {
-                    new SubnetData() { Name = "subnet1", AddressPrefix = "10.10.1.0/24" },
-                    new SubnetData() { Name = "subnet1", AddressPrefix = "10.10.2.0/24" }
+                    new SubnetData() { Name = "default", AddressPrefix = "10.10.1.0/24" },
+                    new SubnetData() { Name = "subnet1", AddressPrefix = "10.10.2.0/24" },
+                    new SubnetData() { Name = "subnet2", AddressPrefix = "10.10.3.0/24" }
                 }
             };
             var vnetLro = await resourceGroup.GetVirtualNetworks().CreateOrUpdateAsync(WaitUntil.Completed, vnetName, vnetInput);
             VirtualNetworkResource vnet = vnetLro.Value;
-
-            // Create a public IP
-            var publicIPInput = new PublicIPAddressData()
-            {
-                Location = resourceGroup.Data.Location,
-                PublicIPAllocationMethod = NetworkIPAllocationMethod.Dynamic,
-            };
-            var publicIP = await resourceGroup.GetPublicIPAddresses().CreateOrUpdateAsync(WaitUntil.Completed, publicIPName, publicIPInput);
 
             // Get subnet id
             var subnetLro = await vnet.GetSubnets().GetAsync("default");
@@ -128,7 +130,7 @@ namespace Azure.ResourceManager.Samples.Common
                         PrivateIPAllocationMethod = NetworkIPAllocationMethod.Dynamic,
                         PublicIPAddress = new PublicIPAddressData()
                         {
-                            Id = publicIP.Value.Id
+                            Id = publicIPId
                         },
                         Subnet = new SubnetData()
                         {
@@ -138,7 +140,12 @@ namespace Azure.ResourceManager.Samples.Common
                 }
             };
             var networkInterfaceLro = await resourceGroup.GetNetworkInterfaces().CreateOrUpdateAsync(WaitUntil.Completed, nicName, subnetInput);
-            NetworkInterfaceResource networkInterface = networkInterfaceLro.Value;
+            return networkInterfaceLro.Value;
+        }
+
+        public static async Task<VirtualMachineResource> CreateVirtualMachine(ResourceGroupResource resourceGroup, NetworkInterfaceResource networkInterface, string vmName)
+        {
+            string adminUsername = Utilities.CreateUsername();
 
             VirtualMachineCollection vmCollection = resourceGroup.GetVirtualMachines();
             VirtualMachineData vmInput = new VirtualMachineData(resourceGroup.Data.Location)
